@@ -18,11 +18,7 @@ CONFIG_FILE  = OUTPUT_DIR / "telegram_config.json"
 SESSION_FILE = OUTPUT_DIR / "telegram_session"
 MAX_PER_SOURCE = 10
 
-# ── Email newsletters ─────────────────────────────────────────────────────────
-EMAIL_ADDRESS  = "ton.adresse@gmail.com"      # ← à remplir
-EMAIL_PASSWORD = "xxxx xxxx xxxx xxxx"        # ← App Password Gmail (pas ton mdp normal)
-EMAIL_SUBJECTS = ["French Tech Updates"]      # ← ajouter d'autres sujets si besoin
-EMAIL_LIMIT    = 10                           # nb de mails max par sujet
+                  # nb de mails max par sujet
 
 # ── Kalshi prediction markets ─────────────────────────────────────────────────
 # Public API — aucune auth requise pour lire les marchés
@@ -32,15 +28,11 @@ KALSHI_CATS  = [
     ("Economics",  "macro", 8),   # (categorie Kalshi, cle interne, nb a afficher)
     ("Technology", "tech",  8),
 ]
-# Mots-cles a bloquer — on exclut le politique et le sport
-KALSHI_BLOCK = [
-    "trump","biden","harris","democrat","republican","election","senate","house",
-    "congress","president","governor","nfl","nba","mlb","nhl","fifa","super bowl",
-    "oscar","emmy","grammy","celebrity","kardashian",
+
 ]
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = "YOUR_GOOGLE_AI_STUDIO_KEY"   # ← remplir sur aistudio.google.com
+GEMINI_API_KEY = "AIzaSyBLDw_d5MVHy1NooJxEE0hQD-lyjS-ms2A"   # ← remplir sur aistudio.google.com
 GEMINI_MODEL   = "gemini-1.5-flash"
 
 TELEGRAM_CHANNELS = [

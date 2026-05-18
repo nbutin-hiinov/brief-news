@@ -39,6 +39,9 @@ KALSHI_BLOCK = [
     "oscar","emmy","grammy","celebrity","kardashian",
 ]
 
+# ── Gemini ────────────────────────────────────────────────────────────────────
+GEMINI_API_KEY = "YOUR_GOOGLE_AI_STUDIO_KEY"   # ← remplir sur aistudio.google.com
+GEMINI_MODEL   = "gemini-1.5-flash"
 
 TELEGRAM_CHANNELS = [
     ("AFP", "https://t.me/+5VtjHHeuarNjYTBk"),
@@ -587,6 +590,75 @@ def _fetch_emails():
     print(f"    → {len(arts)} newsletter emails")
     return arts
 
+def _gemini_executive_summary(tech_groups, macro_arts, conflict_pool):
+    """
+    Call Gemini Flash to generate:
+    - 3 bullets "what to know this morning"
+    - Editorial headline rewrites for top 5 tech + top 5 macro stories
+    Returns dict or None on failure.
+    """
+    if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GOOGLE_AI_STUDIO_KEY":
+        print("  ⚠  Gemini: API key not configured — skipping")
+        return None
+    try:
+        tech_titles  = [g[0]["title"] for g in tech_groups[:10]]
+        macro_titles = [a["title"] for a in macro_arts[:10]]
+        conflict_titles = [a["title"] for a in conflict_pool[:8]]
+        today = datetime.now().strftime("%A %d %B %Y")
+        prompt = f"""Today is {today}.
+
+You are a senior editor writing for Bloomberg/FT readers — financially literate, international, time-pressed.
+
+Here are today's top headlines across three feeds:
+
+TECH & VC:
+{chr(10).join(f"- {t}" for t in tech_titles)}
+
+MACRO & MARKETS:
+{chr(10).join(f"- {t}" for t in macro_titles)}
+
+GEOPOLITICS:
+{chr(10).join(f"- {t}" for t in conflict_titles)}
+
+Your job:
+
+1. Write exactly 3 "what to know this morning" bullets. Each bullet: one bold signal or development that actually matters. Max 2 sentences each. No filler. No "In a sign of..." openings. Direct, precise, analytical tone.
+
+2. Rewrite the top 5 TECH headlines and top 5 MACRO headlines as editorial titles — sharp, specific, no clickbait. Keep under 12 words each.
+
+Return ONLY valid JSON, no markdown, no backticks:
+{{
+  "bullets": [
+    {{"emoji": "📈", "text": "..."}},
+    {{"emoji": "💡", "text": "..."}},
+    {{"emoji": "⚡", "text": "..."}}
+  ],
+  "tech_titles": ["rewritten title 1", "rewritten title 2", "rewritten title 3", "rewritten title 4", "rewritten title 5"],
+  "macro_titles": ["rewritten title 1", "rewritten title 2", "rewritten title 3", "rewritten title 4", "rewritten title 5"]
+}}"""
+        payload = json.dumps({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1024},
+        }).encode()
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read())
+        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        raw = re.sub(r"```(?:json)?", "", raw).strip()
+        result = json.loads(raw)
+        print(f"    → Gemini: {len(result.get('bullets',[]))} bullets, "
+              f"{len(result.get('tech_titles',[]))} tech titles, "
+              f"{len(result.get('macro_titles',[]))} macro titles")
+        return result
+    except Exception as ex:
+        print(f"  ⚠  Gemini: {ex}")
+        return None
+
 def _fetch_kalshi():
     """
     Fetch hottest open markets from Kalshi public API (no auth needed).
@@ -688,342 +760,533 @@ def _fetch_calendar_event_news():
 CSS = """
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#F0EFE9;--bg2:#FFFFFF;--bg3:#E8E6DE;
-  --border:#DDDAD0;--text:#0C0C0C;--muted:#888;--dim:#C2BFB5;
-  --accent:#D42B17;--r:8px;
-  --serif:'Cormorant Garamond',Georgia,serif;
+  --bg:#FFFFFF;--bg2:#F8F7F4;--bg3:#F0EEE9;
+  --border:#E5E2D8;--text:#0A0A0A;--muted:#6B6860;--dim:#B8B5AC;
+  --accent:#C41E1E;--r:3px;
+  --display:'Playfair Display',Georgia,serif;
   --sans:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'IBM Plex Mono',monospace;
 }
 @media(prefers-color-scheme:dark){
-  :root{--bg:#060606;--bg2:#0d0d0d;--bg3:#131313;
-    --border:#1c1c1c;--text:#d4d4d4;--muted:#444;--dim:#242424;--accent:#E84040}
-  header{background:rgba(6,6,6,.97)}
-  .sg-title,.mi-title,.pi-title{color:#686868}
+  :root{
+    --bg:#0C0C0A;--bg2:#131310;--bg3:#1A1A16;
+    --border:#252520;--text:#E8E5DC;--muted:#555250;--dim:#302E28;--accent:#E03030
+  }
+  header{background:rgba(12,12,10,.97)}
+  .sg-title,.mi-title,.pi-title{color:#4A4840}
   .sg-title:hover,.mi:hover .mi-title,.pi-title:hover{color:var(--text)}
-  .ct{color:#686868}
+  .ct{color:#4A4840}
   .card:hover .ct,.mi.open .mi-title{color:var(--text)}
-  .cp-sum{color:#555}
-  .cp-art{color:#555}
-  .cp-art:hover{color:#bbb}
-  .km-bar-bg{background:#1e1e1e}
+  .cp-sum{color:#3A3830}
+  .cp-art{color:#3A3830}
+  .cp-art:hover{color:#aaa}
+  .km-bar-bg{background:#1e1e18}
   .km-item:hover{background:#111}
+  .exec-bullet{border-left-color:#302E28}
 }
 body{font-family:var(--sans);background:var(--bg);color:var(--text);
   font-size:13px;line-height:1.6;-webkit-font-smoothing:antialiased}
 
-/* ── Header ──────────────────────────────────────────────────── */
-header{display:flex;justify-content:space-between;align-items:center;
-  padding:16px 40px;border-bottom:1px solid var(--border);
+/* ── Header ───────────────────────────────────────────────────── */
+header{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:20px 48px;border-bottom:1px solid var(--border);
   position:sticky;top:0;
-  background:rgba(240,239,233,.97);
-  backdrop-filter:blur(20px);z-index:200}
-@media(prefers-color-scheme:dark){header{background:rgba(6,6,6,.97)}}
-header h1{font-family:var(--serif);font-size:20px;font-weight:600;
-  font-style:italic;color:var(--text);letter-spacing:-.3px}
-.ts{font-size:9.5px;color:var(--muted);letter-spacing:.9px;text-transform:uppercase}
-.btn{background:var(--text);color:var(--bg2);border:none;
-  font-size:9px;padding:7px 16px;border-radius:4px;cursor:pointer;
-  font-family:var(--sans);font-weight:700;letter-spacing:1.2px;
-  text-transform:uppercase;transition:background .15s;margin-left:12px}
+  background:rgba(255,255,255,.97);
+  backdrop-filter:blur(20px);z-index:200
+}
+@media(prefers-color-scheme:dark){header{background:rgba(12,12,10,.97)}}
+.logo{
+  font-family:var(--display);font-size:26px;font-weight:700;
+  color:var(--text);letter-spacing:-.5px;font-style:italic;
+  display:flex;align-items:baseline;gap:10px
+}
+.logo-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--accent);flex-shrink:0;margin-bottom:3px
+}
+.ts{
+  font-family:var(--mono);font-size:9px;color:var(--muted);
+  letter-spacing:.5px;text-transform:uppercase
+}
+.btn{
+  background:var(--text);color:var(--bg);border:none;
+  font-size:9px;padding:7px 18px;border-radius:2px;cursor:pointer;
+  font-family:var(--sans);font-weight:700;letter-spacing:1.5px;
+  text-transform:uppercase;transition:background .15s;margin-left:14px
+}
 .btn:hover{background:var(--accent)}
 
-/* ── Filter buttons (city tab bar) ──────────────────────────────── */
-.fb{background:none;border:1px solid var(--border);color:var(--muted);
-  font-size:8px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
-  padding:4px 12px;border-radius:20px;cursor:pointer;
-  font-family:var(--sans);transition:all .15s;flex-shrink:0}
-.fb.on{background:var(--text);color:var(--bg2);border-color:var(--text)}
-.fb:hover:not(.on){color:var(--text);border-color:var(--text)}
+/* ── Executive Summary ─────────────────────────────────────────── */
+.exec-wrap{
+  padding:36px 48px 32px;
+  border-bottom:1px solid var(--border);
+  background:var(--bg)
+}
+.exec-date{
+  font-family:var(--mono);font-size:9px;color:var(--muted);
+  letter-spacing:1.5px;text-transform:uppercase;margin-bottom:16px
+}
+.exec-title{
+  font-family:var(--display);font-size:13px;font-weight:400;
+  color:var(--muted);letter-spacing:2px;text-transform:uppercase;
+  margin-bottom:20px
+}
+.exec-bullets{display:flex;flex-direction:column;gap:0}
+.exec-bullet{
+  display:flex;gap:16px;align-items:baseline;
+  padding:13px 0;border-bottom:1px solid var(--border)
+}
+.exec-bullet:last-child{border-bottom:none}
+.exec-emoji{font-size:14px;flex-shrink:0;line-height:1}
+.exec-text{font-size:14px;line-height:1.65;color:var(--text);font-weight:300}
+.exec-text strong{font-weight:500}
 
 /* ── AFP Ticker ───────────────────────────────────────────────── */
-.ticker{display:flex;align-items:stretch;gap:0;padding:0;
-  border-bottom:1px solid var(--border);background:var(--bg);
-  overflow:hidden;min-height:36px}
-.ticker-label{font-size:8.5px;font-weight:700;letter-spacing:2px;
-  text-transform:uppercase;color:#fff;background:var(--accent);
-  padding:0 18px;display:flex;align-items:center;flex-shrink:0;z-index:2}
-.ticker-track{flex:1;overflow:hidden;position:relative}
-.ticker-items{display:flex;width:max-content;
-  animation:ticker-scroll 55s linear infinite}
-.ticker:hover .ticker-items{animation-play-state:paused}
-@keyframes ticker-scroll{
-  0%{transform:translateX(0)}
-  100%{transform:translateX(-50%)}
+.ticker{
+  display:flex;align-items:stretch;
+  border-bottom:1px solid var(--border);
+  overflow:hidden;min-height:34px
 }
-.t-item{font-size:11.5px;color:var(--muted);text-decoration:none;
+.ticker-label{
+  font-family:var(--mono);font-size:8px;font-weight:600;letter-spacing:2px;
+  text-transform:uppercase;color:#fff;background:var(--accent);
+  padding:0 20px;display:flex;align-items:center;flex-shrink:0;z-index:2
+}
+.ticker-track{flex:1;overflow:hidden;position:relative}
+.ticker-items{
+  display:flex;width:max-content;
+  animation:ticker-scroll 60s linear infinite
+}
+.ticker:hover .ticker-items{animation-play-state:paused}
+@keyframes ticker-scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.t-item{
+  font-size:11px;color:var(--muted);text-decoration:none;
   padding:0 28px;border-right:1px solid var(--border);
   white-space:nowrap;transition:color .12s;
-  display:flex;align-items:center;height:36px;flex-shrink:0}
+  display:flex;align-items:center;height:34px;flex-shrink:0;
+  font-family:var(--sans)
+}
 .t-item:hover{color:var(--text)}
 
-/* ── Section ─────────────────────────────────────────────────── */
-.section{border-bottom:1px solid var(--border)}
-.sec-hd{padding:0 40px;border-bottom:1px solid var(--border);
-  display:flex;align-items:center;justify-content:space-between}
-.dot{display:none} /* hidden in sec-hd; restored for cp-item below */
-.cp-item .dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.sec-hd-text{font-size:9.5px;font-weight:700;letter-spacing:2px;
-  text-transform:uppercase;color:var(--text);font-family:var(--sans);
-  font-style:normal;padding:20px 0 16px}
-.sec-hd-meta{font-size:9px;color:var(--dim);letter-spacing:.3px}
+/* ── Filter buttons ────────────────────────────────────────────── */
+.fb{
+  background:none;border:1px solid var(--border);color:var(--muted);
+  font-size:8px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
+  padding:4px 12px;border-radius:2px;cursor:pointer;
+  font-family:var(--mono);transition:all .15s;flex-shrink:0
+}
+.fb.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+.fb:hover:not(.on){color:var(--text);border-color:var(--text)}
 
-/* ── Layouts ─────────────────────────────────────────────────── */
-.two-col{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border)}
+/* ── Section header ────────────────────────────────────────────── */
+.section{border-bottom:1px solid var(--border)}
+.sec-hd{
+  padding:0 48px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between
+}
+.dot{display:none}
+.cp-item .dot{
+  display:inline-block;width:7px;height:7px;
+  border-radius:50%;flex-shrink:0
+}
+.sec-hd-text{
+  font-family:var(--display);font-size:17px;font-style:italic;
+  font-weight:700;color:var(--text);
+  padding:18px 0 14px;letter-spacing:-.3px
+}
+.sec-hd-meta{
+  font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:.3px
+}
+
+/* ── Layouts ───────────────────────────────────────────────────── */
+.two-col{
+  display:grid;grid-template-columns:1fr 1fr;
+  border-bottom:1px solid var(--border)
+}
 .two-col>.section{border-bottom:none;border-right:1px solid var(--border)}
 .two-col>.section:last-child{border-right:none}
-.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1px solid var(--border)}
-.three-col>.section{border-bottom:none;border-right:1px solid var(--border);
-  height:400px;display:flex;flex-direction:column;overflow:hidden}
+.three-col{
+  display:grid;grid-template-columns:1fr 1fr 1fr;
+  border-bottom:1px solid var(--border)
+}
+.three-col>.section{
+  border-bottom:none;border-right:1px solid var(--border);
+  height:400px;display:flex;flex-direction:column;overflow:hidden
+}
 .three-col>.section:last-child{border-right:none}
 .three-col .story-list,.three-col .paris-list{flex:1;overflow-y:auto;max-height:none}
 
-/* ── Map ─────────────────────────────────────────────────────── */
-.map-wrap{display:flex;height:440px}
+/* ── Map ───────────────────────────────────────────────────────── */
+.map-wrap{display:flex;height:460px}
 #map{flex:0 0 62%;height:100%}
-.cp{flex:1;display:flex;flex-direction:column;
-  border-left:1px solid var(--border);background:var(--bg2);overflow:hidden}
-.cp-hd{padding:10px 16px;font-size:9px;font-weight:500;letter-spacing:1.4px;
-  text-transform:uppercase;color:var(--muted);
-  border-bottom:1px solid var(--border);flex-shrink:0}
+.cp{
+  flex:1;display:flex;flex-direction:column;
+  border-left:1px solid var(--border);background:var(--bg2);overflow:hidden
+}
+.cp-hd{
+  padding:10px 16px;font-family:var(--mono);font-size:9px;
+  font-weight:500;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted);
+  border-bottom:1px solid var(--border);flex-shrink:0
+}
 .cp-list{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .cp-list::-webkit-scrollbar{width:2px}
-.cp-item{display:flex;align-items:center;gap:9px;padding:9px 16px;
-  border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.cp-item{
+  display:flex;align-items:center;gap:9px;padding:9px 16px;
+  border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s
+}
 .cp-item:hover,.cp-item.active{background:var(--bg3)}
-.cp-item-name{font-size:12px;color:#999;flex:1;font-weight:300}
-.new-badge{font-size:8px;font-weight:500;color:#F59E0B;background:#F59E0B12;
-  padding:2px 7px;border-radius:20px;flex-shrink:0;letter-spacing:.4px}
+.cp-item-name{font-size:12px;color:var(--muted);flex:1;font-weight:300}
+.new-badge{
+  font-family:var(--mono);font-size:8px;font-weight:500;color:#D97706;
+  background:#D9770612;padding:2px 7px;border-radius:2px;flex-shrink:0;letter-spacing:.4px
+}
 .cp-det{display:none;flex-direction:column;height:100%}
 .cp-det.on{display:flex}
-.cp-back{padding:9px 16px;font-size:11px;color:var(--muted);cursor:pointer;
-  border-bottom:1px solid var(--border);flex-shrink:0;transition:color .12s}
+.cp-back{
+  padding:9px 16px;font-size:11px;color:var(--muted);cursor:pointer;
+  border-bottom:1px solid var(--border);flex-shrink:0;transition:color .12s
+}
 .cp-back:hover{color:var(--text)}
-.cp-body{flex:1;overflow-y:auto;padding:14px 16px;
-  scrollbar-width:thin;scrollbar-color:var(--border) transparent}
-.cp-name{font-family:var(--serif);font-size:15px;font-style:italic;
-  font-weight:500;color:#fff;margin-bottom:3px}
-.cp-meta{font-size:10px;color:var(--muted);margin-bottom:10px;letter-spacing:.2px}
-.cp-sum{font-size:12px;color:#666;line-height:1.7;margin-bottom:13px;
-  padding-left:10px;border-left:1px solid var(--border);font-weight:300}
-.cp-arts-hd{font-size:9px;font-weight:500;letter-spacing:1.2px;
-  text-transform:uppercase;color:var(--dim);margin-bottom:7px}
-.cp-art{display:block;padding:7px 0;border-bottom:1px solid var(--border);
-  text-decoration:none;color:#555;font-size:11px;line-height:1.5;
-  transition:color .12s;font-weight:300}
+.cp-body{
+  flex:1;overflow-y:auto;padding:14px 16px;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent
+}
+.cp-name{
+  font-family:var(--display);font-size:15px;font-style:italic;
+  font-weight:700;color:var(--text);margin-bottom:3px
+}
+.cp-meta{
+  font-family:var(--mono);font-size:9px;color:var(--muted);
+  margin-bottom:10px;letter-spacing:.2px
+}
+.cp-sum{
+  font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:13px;
+  padding-left:10px;border-left:2px solid var(--border);font-weight:300
+}
+.cp-arts-hd{
+  font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:1.2px;
+  text-transform:uppercase;color:var(--dim);margin-bottom:7px
+}
+.cp-art{
+  display:block;padding:7px 0;border-bottom:1px solid var(--border);
+  text-decoration:none;color:var(--muted);font-size:11px;line-height:1.5;
+  transition:color .12s;font-weight:300
+}
 .cp-art:last-child{border-bottom:none}
-.cp-art:hover{color:#ddd}
-.cp-art small{color:var(--dim);font-size:9px}
+.cp-art:hover{color:var(--text)}
+.cp-art small{color:var(--dim);font-size:9px;font-family:var(--mono)}
 .cp-no{font-size:11px;color:var(--dim);padding:8px 0}
 @keyframes pulse-ring{
-  0%{box-shadow:0 0 0 0 rgba(245,158,11,.65)}
-  70%{box-shadow:0 0 0 10px rgba(245,158,11,0)}
-  100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}
+  0%{box-shadow:0 0 0 0 rgba(212,151,17,.65)}
+  70%{box-shadow:0 0 0 10px rgba(212,151,17,0)}
+  100%{box-shadow:0 0 0 0 rgba(212,151,17,0)}
 }
 .pulse-icon div{animation:pulse-ring 1.8s infinite;border-radius:50%}
 .dark-popup .leaflet-popup-content-wrapper{
-  background:#141414;color:#ddd;border:1px solid #252525;border-radius:10px}
-.dark-popup .leaflet-popup-tip{background:#141414}
+  background:#141412;color:#d8d5cc;border:1px solid #252520;border-radius:4px
+}
+.dark-popup .leaflet-popup-tip{background:#141412}
 
-/* ── Story list (Tech / Sports / Cities) ─────────────────────── */
-.story-list{padding:0 40px 30px;max-height:560px;overflow-y:auto;
-  scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+/* ── Story list ─────────────────────────────────────────────────── */
+.story-list{
+  padding:0 48px 30px;max-height:560px;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent
+}
 .story-list::-webkit-scrollbar{width:2px}
-.sg{padding:11px 0;border-bottom:1px solid var(--border);
-  display:flex;align-items:baseline;gap:10px}
+.sg{
+  padding:12px 0;border-bottom:1px solid var(--border);
+  display:flex;align-items:baseline;gap:12px
+}
 .sg:last-child{border-bottom:none}
-.sg-title{font-size:13px;color:#3a3a3a;text-decoration:none;
-  flex:1;line-height:1.55;transition:color .12s;font-weight:300}
+.sg-title{
+  font-size:13px;color:var(--muted);text-decoration:none;
+  flex:1;line-height:1.6;transition:color .12s;font-weight:300
+}
+.sg-title.editorial{
+  font-family:var(--display);font-size:14px;font-style:italic;
+  font-weight:600;color:var(--text)
+}
 .sg-title:hover{color:var(--text)}
 .badges{display:flex;flex-wrap:wrap;gap:3px;flex-shrink:0}
-.badge{font-size:8px;font-weight:600;color:var(--muted);
-  border:1px solid var(--border);padding:2px 8px;
-  border-radius:20px;white-space:nowrap;letter-spacing:.5px;text-transform:uppercase}
-.sg-time{font-size:9.5px;color:var(--dim);flex-shrink:0}
+.badge{
+  font-family:var(--mono);font-size:8px;font-weight:500;color:var(--dim);
+  border:1px solid var(--border);padding:2px 7px;
+  border-radius:2px;white-space:nowrap;letter-spacing:.5px;text-transform:uppercase
+}
+.sg-time{
+  font-family:var(--mono);font-size:9px;color:var(--dim);flex-shrink:0
+}
 
-/* ── Macro ───────────────────────────────────────────────────── */
-.macro-list{padding:0 40px 30px;max-height:560px;overflow-y:auto;
-  scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+/* ── Macro list ─────────────────────────────────────────────────── */
+.macro-list{
+  padding:0 48px 30px;max-height:560px;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent
+}
 .macro-list::-webkit-scrollbar{width:2px}
-.mi{padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer}
+.mi{
+  padding:11px 0;border-bottom:1px solid var(--border);cursor:pointer
+}
 .mi:last-child{border-bottom:none}
 .mi-row{display:flex;gap:12px;align-items:baseline}
-.mi-src{font-size:8px;color:var(--muted);width:66px;flex-shrink:0;
+.mi-src{
+  font-family:var(--mono);font-size:8px;color:var(--dim);width:64px;flex-shrink:0;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  letter-spacing:.7px;text-transform:uppercase;font-weight:600}
-.mi-title{font-size:13px;color:#3a3a3a;flex:1;line-height:1.55;
-  transition:color .12s;font-weight:300}
+  letter-spacing:.7px;text-transform:uppercase;font-weight:500
+}
+.mi-title{
+  font-size:13px;color:var(--muted);flex:1;line-height:1.6;
+  transition:color .12s;font-weight:300
+}
+.mi-title.editorial{
+  font-family:var(--display);font-size:14px;font-style:italic;
+  font-weight:600;color:var(--text)
+}
 .mi:hover .mi-title{color:var(--text)}
-.mi-time{font-size:9.5px;color:var(--dim);flex-shrink:0}
-.mi-expand{display:none;padding:8px 0 4px 78px;font-size:11.5px;
-  color:var(--muted);line-height:1.65;font-weight:300}
-.mi-expand a{color:var(--accent);text-decoration:none;font-size:11px;
-  display:inline-block;margin-top:6px}
+.mi-time{font-family:var(--mono);font-size:9px;color:var(--dim);flex-shrink:0}
+.mi-expand{
+  display:none;padding:8px 0 4px 76px;font-size:11.5px;
+  color:var(--muted);line-height:1.65;font-weight:300
+}
+.mi-expand a{
+  color:var(--accent);text-decoration:none;font-size:11px;
+  display:inline-block;margin-top:6px
+}
 .mi-expand a:hover{text-decoration:underline}
 .mi.open .mi-expand{display:block}
 .mi.open .mi-title{color:var(--text)}
 
-/* ── Kalshi markets ──────────────────────────────────────────── */
-.kalshi-wrap{display:grid;grid-template-columns:1fr 1fr;
-  border-top:1px solid var(--border)}
-.kalshi-col{padding:0 40px 28px}
+/* ── Kalshi ─────────────────────────────────────────────────────── */
+.kalshi-wrap{
+  display:grid;grid-template-columns:1fr 1fr;
+  border-top:1px solid var(--border)
+}
+.kalshi-col{padding:0 48px 28px}
 .kalshi-col:first-child{border-right:1px solid var(--border)}
-.kalshi-sub{font-size:9px;font-weight:700;letter-spacing:1.4px;
+.kalshi-sub{
+  font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:1.4px;
   text-transform:uppercase;color:var(--muted);
-  padding:14px 0 10px;border-bottom:1px solid var(--border);margin-bottom:4px}
-.km-item{display:flex;align-items:center;gap:12px;
+  padding:14px 0 10px;border-bottom:1px solid var(--border);margin-bottom:4px
+}
+.km-item{
+  display:flex;align-items:center;gap:12px;
   padding:9px 0;border-bottom:1px solid var(--border);
-  text-decoration:none;color:inherit;transition:background .1s;border-radius:0}
+  text-decoration:none;color:inherit;transition:background .1s;border-radius:0
+}
 .km-item:last-child{border-bottom:none}
-.km-item:hover{background:var(--bg3);margin:0 -8px;padding:9px 8px;border-radius:4px}
-.km-title{font-size:12px;color:#3a3a3a;flex:1;line-height:1.5;font-weight:300}
-.km-prob{font-size:13px;font-weight:600;flex-shrink:0;min-width:38px;text-align:right}
+.km-item:hover{
+  background:var(--bg3);margin:0 -8px;
+  padding:9px 8px;border-radius:2px
+}
+.km-title{
+  font-size:12px;color:var(--muted);flex:1;line-height:1.5;font-weight:300
+}
+.km-prob{
+  font-family:var(--mono);font-size:13px;font-weight:600;
+  flex-shrink:0;min-width:38px;text-align:right
+}
 .km-bar-wrap{width:44px;flex-shrink:0}
-.km-bar-bg{height:4px;background:#eee;border-radius:2px;overflow:hidden}
-.km-bar-fill{height:100%;border-radius:2px}
-.km-vol{font-size:9px;color:var(--dim);flex-shrink:0;white-space:nowrap}
+.km-bar-bg{height:3px;background:var(--bg3);border-radius:0;overflow:hidden}
+.km-bar-fill{height:100%;border-radius:0}
+.km-vol{
+  font-family:var(--mono);font-size:9px;color:var(--dim);
+  flex-shrink:0;white-space:nowrap
+}
 .kalshi-empty{font-size:11px;color:var(--dim);padding:14px 0;font-style:italic}
 
-
-.cards{display:flex;gap:13px;overflow-x:auto;padding:0 40px 22px;
-  scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+/* ── Culture cards ──────────────────────────────────────────────── */
+.cards{
+  display:flex;gap:14px;overflow-x:auto;padding:0 48px 24px;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent
+}
 .cards::-webkit-scrollbar{height:2px}
 .cards::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
-.card{flex:0 0 200px;background:var(--bg2);border:1px solid var(--border);
-  border-radius:var(--r);text-decoration:none;color:inherit;overflow:hidden;
-  display:flex;flex-direction:column;transition:border-color .18s,transform .2s,box-shadow .2s}
-.card:hover{transform:translateY(-5px);border-color:var(--text);
-  box-shadow:0 10px 28px rgba(0,0,0,.09)}
+.card{
+  flex:0 0 196px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:2px;text-decoration:none;color:inherit;overflow:hidden;
+  display:flex;flex-direction:column;transition:border-color .18s,transform .2s
+}
+.card:hover{transform:translateY(-4px);border-color:var(--text)}
 .card:hover .ct{color:var(--text)}
-.ci{height:120px;background-size:cover;background-position:center;
-  position:relative;flex-shrink:0}
-.ci::after{content:'';position:absolute;inset:0;
-  background:linear-gradient(to top,rgba(0,0,0,.45) 0%,transparent 55%)}
-.cs{position:absolute;bottom:8px;left:9px;z-index:1;
-  font-size:8px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
-  background:rgba(0,0,0,.55);backdrop-filter:blur(8px);
-  padding:2px 8px;border-radius:20px;color:#e0e0e0}
-.cb{padding:10px 12px 12px;flex:1;display:flex;flex-direction:column;
-  justify-content:space-between}
-.ct{font-size:11.5px;line-height:1.5;color:#555;transition:color .15s;
-  flex:1;margin-bottom:6px;font-weight:300}
-.ctime{font-size:9px;color:var(--muted)}
+.ci{
+  height:118px;background-size:cover;background-position:center;
+  position:relative;flex-shrink:0
+}
+.ci::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(to top,rgba(0,0,0,.5) 0%,transparent 60%)
+}
+.cs{
+  position:absolute;bottom:8px;left:9px;z-index:1;
+  font-family:var(--mono);font-size:8px;font-weight:600;letter-spacing:1px;
+  text-transform:uppercase;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);
+  padding:2px 8px;border-radius:2px;color:#e0e0e0
+}
+.cb{
+  padding:10px 12px 12px;flex:1;display:flex;flex-direction:column;
+  justify-content:space-between
+}
+.ct{
+  font-size:11.5px;line-height:1.55;color:var(--muted);transition:color .15s;
+  flex:1;margin-bottom:6px;font-weight:300
+}
+.ctime{font-family:var(--mono);font-size:9px;color:var(--dim)}
 
-/* ── Paris / What's On ───────────────────────────────────────── */
-.paris-list{padding:0 40px 30px;max-height:560px;overflow-y:auto;
-  scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+/* ── Paris list ─────────────────────────────────────────────────── */
+.paris-list{
+  padding:0 48px 30px;max-height:560px;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent
+}
 .paris-list::-webkit-scrollbar{width:2px}
-.pi{display:flex;gap:12px;align-items:baseline;
-  padding:10px 0;border-bottom:1px solid var(--border)}
+.pi{
+  display:flex;gap:12px;align-items:baseline;
+  padding:10px 0;border-bottom:1px solid var(--border)
+}
 .pi:last-child{border-bottom:none}
-.pi-src{font-size:8px;color:var(--muted);width:74px;flex-shrink:0;
+.pi-src{
+  font-family:var(--mono);font-size:8px;color:var(--dim);width:74px;flex-shrink:0;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  letter-spacing:.7px;text-transform:uppercase;font-weight:600}
-.pi-title{font-size:13px;color:#3a3a3a;text-decoration:none;
-  flex:1;line-height:1.55;transition:color .12s;font-weight:300}
+  letter-spacing:.7px;text-transform:uppercase;font-weight:500
+}
+.pi-title{
+  font-size:13px;color:var(--muted);text-decoration:none;
+  flex:1;line-height:1.55;transition:color .12s;font-weight:300
+}
 .pi-title:hover{color:var(--text)}
-.pi-t{font-size:9.5px;color:var(--dim);flex-shrink:0}
+.pi-t{font-family:var(--mono);font-size:9px;color:var(--dim);flex-shrink:0}
 
-/* ── Calendar nav & event list ───────────────────────────────── */
-.cal-btn{background:none;border:1px solid var(--border);color:var(--text);
-  font-size:14px;width:30px;height:30px;border-radius:50%;cursor:pointer;
+/* ── Calendar ───────────────────────────────────────────────────── */
+.cal-btn{
+  background:none;border:1px solid var(--border);color:var(--text);
+  font-family:var(--mono);font-size:12px;width:28px;height:28px;
+  border-radius:2px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  font-family:var(--sans);transition:all .15s}
-.cal-btn:hover{background:var(--text);color:var(--bg2);border-color:var(--text)}
+  transition:all .15s
+}
+.cal-btn:hover{background:var(--text);color:var(--bg);border-color:var(--text)}
 .cal-btn:disabled{opacity:.25;cursor:default;pointer-events:none}
-.cal-nav-label{font-size:9px;font-weight:600;letter-spacing:1px;
-  text-transform:uppercase;color:var(--muted)}
+.cal-nav-label{
+  font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:1px;
+  text-transform:uppercase;color:var(--muted)
+}
 .cal-legend{display:flex;flex-wrap:wrap;gap:6px 16px;flex:1}
-.cal-leg-i{display:flex;align-items:center;gap:5px;
-  font-size:8px;font-weight:600;letter-spacing:.7px;
-  text-transform:uppercase;color:var(--muted)}
+.cal-leg-i{
+  display:flex;align-items:center;gap:5px;
+  font-family:var(--mono);font-size:8px;font-weight:600;letter-spacing:.7px;
+  text-transform:uppercase;color:var(--muted)
+}
 .cal-leg-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.cal-months{display:grid;grid-template-columns:repeat(3,1fr);
-  padding:24px 40px 40px;gap:0 48px;align-items:start}
+.cal-months{
+  display:grid;grid-template-columns:repeat(3,1fr);
+  padding:28px 48px 44px;gap:0 52px;align-items:start
+}
 .cal-month{min-width:0}
-.cal-mhd{font-family:var(--serif);font-size:16px;font-style:italic;
-  font-weight:600;color:var(--text);margin-bottom:12px;
-  padding-bottom:9px;border-bottom:2px solid var(--border)}
+.cal-mhd{
+  font-family:var(--display);font-size:17px;font-style:italic;
+  font-weight:700;color:var(--text);margin-bottom:12px;
+  padding-bottom:9px;border-bottom:2px solid var(--border)
+}
 .cal-elist{display:flex;flex-direction:column}
-.cal-erow{display:grid;grid-template-columns:8px 1fr auto;
-  align-items:start;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)}
+.cal-erow{
+  display:grid;grid-template-columns:8px 1fr auto;
+  align-items:start;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)
+}
 .cal-erow:last-child{border-bottom:none}
-.cal-erow.ev-past{opacity:.33}
-.cal-erow.ev-live{background:var(--bg3);border-radius:3px;
-  padding:5px 7px;margin:0 -7px 1px -7px;border-bottom:none}
+.cal-erow.ev-past{opacity:.3}
+.cal-erow.ev-live{
+  background:var(--bg3);border-radius:2px;
+  padding:5px 7px;margin:0 -7px 1px -7px;border-bottom:none
+}
 .cal-edot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:3px}
 .cal-ename{font-size:11.5px;color:var(--text);font-weight:300;line-height:1.4}
-.cal-erange{font-size:9px;color:var(--muted);white-space:nowrap;
-  text-align:right;padding-top:1px}
-.cal-empty-msg{font-size:11px;color:var(--dim);padding:10px 0;font-style:italic}
-
-/* ── Calendar event detail panel ────────────────────────────── */
-.cal-det{border-top:1px solid var(--border);padding:24px 40px 32px;
-  background:var(--bg2)}
-.cal-det-hd{display:flex;align-items:center;justify-content:space-between;
-  margin-bottom:18px}
+.cal-erange{
+  font-family:var(--mono);font-size:9px;color:var(--muted);
+  white-space:nowrap;text-align:right;padding-top:1px
+}
+.cal-empty-msg{
+  font-size:11px;color:var(--dim);padding:10px 0;font-style:italic
+}
+.cal-det{
+  border-top:1px solid var(--border);padding:28px 48px 36px;
+  background:var(--bg2)
+}
+.cal-det-hd{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:18px
+}
 .cal-det-title{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-.cal-det-name{font-family:var(--serif);font-size:17px;font-style:italic;
-  font-weight:600;color:var(--text)}
-.cal-det-range{font-size:10px;color:var(--muted);letter-spacing:.3px}
-.cal-det-close{background:none;border:1px solid var(--border);color:var(--muted);
-  font-size:16px;width:28px;height:28px;border-radius:50%;cursor:pointer;
+.cal-det-name{
+  font-family:var(--display);font-size:18px;font-style:italic;
+  font-weight:700;color:var(--text)
+}
+.cal-det-range{
+  font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.3px
+}
+.cal-det-close{
+  background:none;border:1px solid var(--border);color:var(--muted);
+  font-size:15px;width:28px;height:28px;border-radius:2px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;flex-shrink:0;
-  font-family:var(--sans);transition:all .15s}
-.cal-det-close:hover{background:var(--text);color:var(--bg2);border-color:var(--text)}
-.cal-det-arts{display:grid;grid-template-columns:repeat(2,1fr);
-  border-top:1px solid var(--border)}
-.cal-det-art{padding:9px 16px 9px 0;border-bottom:1px solid var(--border);
+  transition:all .15s
+}
+.cal-det-close:hover{background:var(--text);color:var(--bg);border-color:var(--text)}
+.cal-det-arts{
+  display:grid;grid-template-columns:repeat(2,1fr);
+  border-top:1px solid var(--border)
+}
+.cal-det-art{
+  padding:9px 16px 9px 0;border-bottom:1px solid var(--border);
   text-decoration:none;color:var(--text);display:block;font-size:12px;
-  line-height:1.55;font-weight:300;transition:color .12s}
+  line-height:1.55;font-weight:300;transition:color .12s
+}
 .cal-det-art:hover{color:var(--accent)}
-.cal-det-art small{display:block;font-size:9px;color:var(--dim);margin-top:2px}
-.cal-det-none{font-size:11px;color:var(--dim);padding:12px 0;font-style:italic;
-  border-top:1px solid var(--border)}
+.cal-det-art small{
+  display:block;font-family:var(--mono);font-size:9px;
+  color:var(--dim);margin-top:2px
+}
+.cal-det-none{
+  font-size:11px;color:var(--dim);padding:12px 0;font-style:italic;
+  border-top:1px solid var(--border)
+}
 .cal-erow[data-ev]{cursor:pointer}
 .cal-erow[data-ev]:hover .cal-ename{color:var(--accent)}
 .cal-erow.ev-sel .cal-ename{color:var(--accent)}
-.cal-erow.ev-sel{background:var(--bg3);border-radius:3px;
-  padding:5px 7px;margin:0 -7px 1px -7px;border-bottom:none}
-
-/* ── Tablet (<=1100px) ────────────────────────────────────────── */
-@media(max-width:1100px){
-  .cal-months{grid-template-columns:repeat(2,1fr);gap:0 32px}
+.cal-erow.ev-sel{
+  background:var(--bg3);border-radius:2px;
+  padding:5px 7px;margin:0 -7px 1px -7px;border-bottom:none
 }
 
-/* ── Mobile (<=768px) ─────────────────────────────────────────── */
+/* ── Tablet ─────────────────────────────────────────────────────── */
+@media(max-width:1100px){
+  .cal-months{grid-template-columns:repeat(2,1fr);gap:0 36px}
+}
+
+/* ── Mobile ─────────────────────────────────────────────────────── */
 @media(max-width:768px){
-  header{padding:12px 16px;flex-wrap:wrap;gap:8px}
-  header h1{font-size:17px}
-  .ts{font-size:8.5px}
+  header{padding:14px 20px;flex-wrap:wrap;gap:8px}
+  .logo{font-size:21px}
+  .ts{font-size:8px}
   .btn{padding:6px 12px;font-size:8px;margin-left:0}
-
-  .sec-hd{padding:0 16px}
-  .story-list{padding:0 16px 16px}
-  .macro-list{padding:0 16px 16px}
-  .paris-list{padding:0 16px 16px}
-  .cards{padding:0 16px 14px}
-
+  .exec-wrap{padding:24px 20px 20px}
+  .sec-hd{padding:0 20px}
+  .story-list,.macro-list,.paris-list{padding:0 20px 20px}
+  .cards{padding:0 20px 16px}
   .two-col{grid-template-columns:1fr}
   .two-col>.section{border-right:none;border-bottom:1px solid var(--border)}
   .two-col>.section:last-child{border-bottom:none}
-
   .three-col{grid-template-columns:1fr}
-  .three-col>.section{height:auto;border-right:none;border-bottom:1px solid var(--border)}
+  .three-col>.section{
+    height:auto;border-right:none;border-bottom:1px solid var(--border)
+  }
   .three-col>.section:last-child{border-bottom:none}
   .three-col .story-list,.three-col .paris-list{max-height:280px}
-
   .map-wrap{flex-direction:column;height:auto}
   #map{flex:none;height:240px;width:100%}
   .cp{border-left:none;border-top:1px solid var(--border);height:280px}
-
   .kalshi-wrap{grid-template-columns:1fr}
-  .kalshi-col{padding:0 16px 20px}
+  .kalshi-col{padding:0 20px 20px}
   .kalshi-col:first-child{border-right:none;border-bottom:1px solid var(--border)}
-
-  .cal-months{grid-template-columns:1fr;padding:16px 16px 24px;gap:24px 0}
-  .cal-legend{gap:5px 12px}
-  .cal-leg-i{font-size:7.5px}
-  .cal-det{padding:16px 16px 24px}
+  .cal-months{grid-template-columns:1fr;padding:20px 20px 28px;gap:28px 0}
+  .cal-det{padding:20px 20px 28px}
   .cal-det-arts{grid-template-columns:1fr}
 }
 """
@@ -1034,10 +1297,28 @@ def _sec(color, label, body, extra_style=""):
     style = f"style='{extra_style}'" if extra_style else ""
     return (
         f'<div class="section" {style}>'
-        f'<div class="sec-hd" style="border-top:2px solid {color}">'
+        f'<div class="sec-hd" style="border-left:3px solid {color}">'
         f'<span class="sec-hd-text">{label}</span>'
         f'</div>'
         f'{body}</div>\n'
+    )
+
+def build_executive_summary(gemini_data, now_str):
+    if not gemini_data or not gemini_data.get("bullets"):
+        return ""
+    bullets_html = "".join(
+        f'<div class="exec-bullet">'
+        f'<span class="exec-emoji">{b.get("emoji","•")}</span>'
+        f'<span class="exec-text">{_s(b.get("text",""))}</span>'
+        f'</div>'
+        for b in gemini_data["bullets"]
+    )
+    return (
+        f'<div class="exec-wrap">'
+        f'<div class="exec-date">{now_str}</div>'
+        f'<div class="exec-title">Three things to know this morning</div>'
+        f'<div class="exec-bullets">{bullets_html}</div>'
+        f'</div>\n'
     )
 def build_ticker(items):
     if not items:
@@ -1177,25 +1458,31 @@ def build_tech(groups):
         primary = g[0]
         sources = list(dict.fromkeys(a["source"] for a in g))
         badges  = "".join(f'<span class="badge">{_s(s)}</span>' for s in sources)
+        ed_title = primary.get("editorial_title")
+        title_html = _s(ed_title) if ed_title else _s(primary["title"])
+        title_cls  = "sg-title editorial" if ed_title else "sg-title"
         rows += (
             f'<div class="sg">'
-            f'<a href="{_s(primary["link"])}" target="_blank" rel="noopener" class="sg-title">'
-            f'{_s(primary["title"])}</a>'
+            f'<a href="{_s(primary["link"])}" target="_blank" rel="noopener" class="{title_cls}">'
+            f'{title_html}</a>'
             f'<div class="badges">{badges}</div>'
             f'<span class="sg-time">{_ago(primary["date"])}</span>'
             f'</div>\n'
         )
-    return _sec("#0C0C0C","Tech — Startups — VC",
+    return _sec("#0A0A0A","Tech — Startups — VC",
                 f'<div class="story-list">{rows}</div>')
 def build_macro(arts):
     rows = ""
     for a in arts[:35]:
-        snip = _s(a["snip"]) if a.get("snip") else ""
+        snip     = _s(a["snip"]) if a.get("snip") else ""
+        ed_title = a.get("editorial_title")
+        title_html = _s(ed_title) if ed_title else _s(a["title"])
+        title_cls  = "mi-title editorial" if ed_title else "mi-title"
         rows += (
             f'<div class="mi" onclick="this.classList.toggle(\'open\')">'
             f'<div class="mi-row">'
             f'<span class="mi-src">{_s(a["source"])}</span>'
-            f'<span class="mi-title">{_s(a["title"])}</span>'
+            f'<span class="{title_cls}">{title_html}</span>'
             f'<span class="mi-time">{_ago(a["date"])}</span>'
             f'</div>'
             f'<div class="mi-expand">{snip}'
@@ -1203,7 +1490,7 @@ def build_macro(arts):
             f'→ Read on {_s(a["source"])}</a></div>'
             f'</div>\n'
         )
-    return _sec("#0C0C0C","Macro — Finance — Markets",
+    return _sec("#0A0A0A","Macro — Finance — Markets",
                 f'<div class="macro-list">{rows}</div>')
 def build_kalshi(kalshi_data):
     """Build the Kalshi prediction markets section (Economics + Technology)."""
@@ -1557,6 +1844,16 @@ def main():
     print(f"    → {len(event_news)} events with coverage")
     print("  Fetching Kalshi prediction markets…")
     kalshi_data = _fetch_kalshi()
+    print("  Generating executive summary with Gemini…")
+    gemini_data = _gemini_executive_summary(tech_grp, macro_arts, conflict_pool)
+    # Apply Gemini editorial titles to top stories
+    if gemini_data:
+        for i, title in enumerate(gemini_data.get("tech_titles", [])):
+            if i < len(tech_grp):
+                tech_grp[i][0]["editorial_title"] = title
+        for i, title in enumerate(gemini_data.get("macro_titles", [])):
+            if i < len(macro_arts):
+                macro_arts[i]["editorial_title"] = title
     raw_match = _match_conflicts(conflict_pool)
     conf_arts_js = {
         cid: [{"title":a["title"],"link":a["link"],
@@ -1574,19 +1871,20 @@ def main():
 <title>Morning Brief</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;1,400;1,600&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,400;1,600;1,700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>{CSS}</style>
 </head>
 <body>
 <header>
-  <h1>☀ Morning Brief</h1>
+  <div class="logo"><span class="logo-dot"></span>Morning Brief</div>
   <div style="display:flex;align-items:center">
-    <span class="ts">Updated {now_str}</span>
+    <span class="ts">{now_str}</span>
     <button class="btn" onclick="location.reload()">↻ Refresh</button>
   </div>
 </header>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{build_executive_summary(gemini_data, now_str)}
 {build_ticker(afp["ticker"])}
 {build_map(json.dumps(conf_js, ensure_ascii=False),
            json.dumps(conf_arts_js, ensure_ascii=False))}
